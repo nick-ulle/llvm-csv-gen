@@ -1,0 +1,11 @@
+Package: llvm.csv.gen
+Title: readCSV Rllvm Case Study
+Version: 0.1.0
+Author: Nick Ulle, Duncan Temple Lang
+Maintainer: Nick Ulle <nick.ulle@gmail.com>
+Description: Generates an readCSV routine in LLVM IR for a CSV with specified
+  column classes.
+Depends: R (>= 3.2.1)
+License: MIT + file LICENSE
+LazyData: true
+Imports: Rllvm

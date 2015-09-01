@@ -1,11 +1,29 @@
 
-# Generate LLVM IR to read a CSV file, given the column classes and file name.
-# 1. Call fopen() on file.
-# 2. Run a tokenizer in a while loop.
-# 3. Put each token in its variable.
+#' @useDynLib llvm.csv.gen
+#' @import Rllvm
+NULL
 
-library(Rllvm)
 
+#' readCSV Demo
+#'
+#' Run a demonstration of the compiled readCSV routine.
+#'
+#' @export
+demo_readCSV = function()
+{
+  llvmAddSymbol("nextToken")
+  m = generate_readCSV(colClasses = list("integer", "numeric", "integer"))
+  file = system.file("sample.csv", package = "llvm.csv.gen")
+  .llvm(m$readCSV, file, 3L)
+}
+
+
+#' Include stdlib.h
+#'
+#' Declare structures and routines from stdlib.h.
+#'
+#' @param module LLVM module
+#' @export
 include_stdlib = function(module = Module())
 {
   stdlib = list()
@@ -23,8 +41,14 @@ include_stdlib = function(module = Module())
   return(stdlib)
 }
 
+
+#' Include stdio.h
+#'
+#' Declare structures and routines from stdio.h.
+#'
+#' @param module LLVM module
+#' @export
 include_stdio = function(module = Module())
-  # Declare structures and functions from stdio.h.
 {
   stdio = list()
   # Declare FILE structs.
@@ -49,6 +73,13 @@ include_stdio = function(module = Module())
   return(stdio)
 }
 
+
+#' Include Rdefines.h
+#'
+#' Declare structures and routines from Rdefines.h and Rinternals.h.
+#'
+#' @param module LLVM module
+#' @export
 include_rdefines = function(module = Module())
 {
   rdefines = list()
@@ -56,46 +87,40 @@ include_rdefines = function(module = Module())
   LOGICAL = Function("LOGICAL", Int32PtrType, list(SEXPType), module = module)
   INTEGER = Function("INTEGER", Int32PtrType, list(SEXPType), module = module)
   REAL = Function("REAL", DoublePtrType, list(SEXPType), module = module)
-  #CHAR = Function("CHAR", StringType, list(SEXPType), module = module)
+  R_CHAR = Function("R_CHAR", StringType, list(SEXPType), module = module)
 
   rdefines$POINTER_TO = c(
-  #  "character" = CHAR,
+    "character" = R_CHAR,
     "integer" = INTEGER,
     "numeric" = REAL,
     "logical" = LOGICAL,
     "factor" = INTEGER
   )
 
-  # FIXME: Need to use Rf_allocVector
-  #NEW_LOGICAL =
-  #  Function("NEW_LOGICAL", SEXPType, list(Int32Type), module = module)
-  #NEW_INTEGER =
-  #  Function("NEW_INTEGER", SEXPType, list(Int32Type), module = module)
-  #NEW_NUMERIC =
-  #  Function("NEW_NUMERIC", SEXPType, list(Int32Type), module = module)
-  #NEW_CHARACTER =
-  #  Function("NEW_CHARACTER", SEXPType, list(Int32Type), module = module)
+  rdefines$SXPTYPE = c(
+    "logical" = createIntegerConstant(10L),
+    "integer" = createIntegerConstant(13L),
+    "factor" = createIntegerConstant(13L),
+    "numeric" = createIntegerConstant(14L),
+    # STRSXP
+    "character" = createIntegerConstant(16L),
+    # VECSXP
+    "list" = createIntegerConstant(19L)
+  )
 
-  #rdefines$ALLOCATE = c(
-  #  "character" = NEW_CHARACTER,
-  #  "integer" = NEW_INTEGER,
-  #  "numeric" = NEW_NUMERIC,
-  #  "logical" = NEW_LOGICAL,
-  #  "factor" = NEW_INTEGER
-  #)
+  rdefines$Rf_allocVector =
+    Function("Rf_allocVector", SEXPType, list(Int32Type, Int32Type),
+      module = module)
 
   rdefines$STRING_ELT =
     Function("STRING_ELT", SEXPType, list(SEXPType, Int32Type),
       module = module)
 
-  rdefines$PROTECT =
-    Function("PROTECT", SEXPType, list(SEXPType), module = module)
+  rdefines$Rf_protect =
+    Function("Rf_protect", SEXPType, list(SEXPType), module = module)
 
-  rdefines$UNPROTECT =
-    Function("UNPROTECT", VoidType, list(Int32Type), module = module)
-
-  #rdefines$NEW_LIST =
-  #  Function("NEW_LIST", SEXPType, list(Int32Type), module = module)
+  rdefines$Rf_unprotect =
+    Function("Rf_unprotect", VoidType, list(Int32Type), module = module)
 
   rdefines$SET_VECTOR_ELT =
     Function("SET_VECTOR_ELT", SEXPType, list(SEXPType, Int32Type, SEXPType),
@@ -104,8 +129,15 @@ include_rdefines = function(module = Module())
   return(rdefines)
 }
 
-genCSV = function(colClasses = list("integer", "numeric", "integer"), module = Module())
-  # Generate LLVM IR to read a CSV file.
+
+#' Generate readCSV Routine
+#'
+#' Generate a routine in LLVM IR for reading a CSV file.
+#'
+#' @param colClasses column classes of CSV file
+#' @param module LLVM module
+#' @export
+generate_readCSV = function(colClasses, module = Module())
 {
   # Definitions --------------------------------------------------
   stdlib = include_stdlib(module)
@@ -142,14 +174,6 @@ genCSV = function(colClasses = list("integer", "numeric", "integer"), module = M
       id = "file")
   # TODO: Check that the file was actually opened.
 
-  # Allocate and fill a buffer.
-  #ll_buffer = createAlloc(builder, arrayType(Int8Type, 10000L), "buffer")
-  #ll_buffer_ptr =
-  #  createGEP(builder, ll_buffer, replicate(2, createIntegerConstant(0L)),
-  #    "buffer_ptr")
-  #createCall(builder, stdio$fgets, ll_buffer_ptr,
-  #  createIntegerConstant(10000L), ll_file)
-
   # Allocate Memory --------------------------------------------------
   # Get a pointer to the number of rows.
   tmp = createCall(builder, rdefines$POINTER_TO[["integer"]], args$r_n)
@@ -160,8 +184,10 @@ genCSV = function(colClasses = list("integer", "numeric", "integer"), module = M
   ll_col_sexps =
     lapply(colClasses,
       function(col) {
-        ll_col_sexp = createCall(builder, rdefines$ALLOCATE[[col]], ll_n)
-        createCall(builder, rdefines$PROTECT, ll_col_sexp)
+        ll_col_sexp =
+          createCall(builder, rdefines$Rf_allocVector,
+            rdefines$SXPTYPE[[col]], ll_n)
+        createCall(builder, rdefines$Rf_protect, ll_col_sexp)
         return(ll_col_sexp)
       })
 
@@ -221,8 +247,10 @@ genCSV = function(colClasses = list("integer", "numeric", "integer"), module = M
 
   createCall(builder, stdio$fclose, ll_file)
 
-  ll_ans = createCall(builder, rdefines$NEW_LIST, ll_n, id = "ans")
-  createCall(builder, rdefines$PROTECT, ll_ans)
+  ll_ans =
+    createCall(builder, rdefines$Rf_allocVector,
+      rdefines$SXPTYPE[["list"]], ll_n, id = "ans")
+  createCall(builder, rdefines$Rf_protect, ll_ans)
   # Add columns to list.
   mapply(
     function(j, ll_col_sexp) {
@@ -230,7 +258,7 @@ genCSV = function(colClasses = list("integer", "numeric", "integer"), module = M
         createIntegerConstant(j), ll_col_sexp)
     }, seq_along(ll_col_sexps) - 1L, ll_col_sexps, SIMPLIFY = FALSE)
 
-  createCall(builder, rdefines$UNPROTECT, 
+  createCall(builder, rdefines$Rf_unprotect, 
     createIntegerConstant(length(colClasses) + 1L))
   
   createRet(builder, ll_ans)
