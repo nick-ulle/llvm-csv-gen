@@ -112,6 +112,10 @@ include_rdefines = function(module = Module())
     Function("Rf_allocVector", SEXPType, list(Int32Type, Int32Type),
       module = module)
 
+  rdefines$SET_STRING_ELT =
+    Function("SET_STRING_ELT", VoidType, list(SEXPType, Int32Type, SEXPType),
+      module = module)
+
   rdefines$STRING_ELT =
     Function("STRING_ELT", SEXPType, list(SEXPType, Int32Type),
       module = module)
@@ -125,6 +129,9 @@ include_rdefines = function(module = Module())
   rdefines$SET_VECTOR_ELT =
     Function("SET_VECTOR_ELT", SEXPType, list(SEXPType, Int32Type, SEXPType),
       module = module)
+
+  rdefines$Rf_mkChar =
+    Function("Rf_mkChar", SEXPType, list(StringType), module = module)
 
   return(rdefines)
 }
@@ -224,7 +231,11 @@ generate_readCSV = function(colClasses, module = Module())
         getNULLPointer(Int32PtrType))
 
       if (col == "character") {
-        # Do special character stuff.
+        # Convert to SEXP.
+        cur = createCall(builder, rdefines$Rf_mkChar, cur)
+
+        # Store in variable.
+        createCall(builder, rdefines$SET_STRING_ELT, ll_col, ll_i, cur)
       } else {
         # Convert to correct type.
         cur = createCall(builder, stdlib$CONVERT_TO[[col]], cur)
@@ -249,7 +260,8 @@ generate_readCSV = function(colClasses, module = Module())
 
   ll_ans =
     createCall(builder, rdefines$Rf_allocVector,
-      rdefines$SXPTYPE[["list"]], ll_n, id = "ans")
+      rdefines$SXPTYPE[["list"]], createIntegerConstant(length(colClasses)),
+      id = "ans")
   createCall(builder, rdefines$Rf_protect, ll_ans)
   # Add columns to list.
   mapply(
