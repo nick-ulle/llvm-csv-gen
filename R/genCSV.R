@@ -116,10 +116,6 @@ include_rdefines = function(module = Module())
     Function("SET_STRING_ELT", VoidType, list(SEXPType, Int32Type, SEXPType),
       module = module)
 
-  rdefines$STRING_ELT =
-    Function("STRING_ELT", SEXPType, list(SEXPType, Int32Type),
-      module = module)
-
   rdefines$Rf_protect =
     Function("Rf_protect", SEXPType, list(SEXPType), module = module)
 
@@ -154,7 +150,7 @@ generate_readCSV = function(colClasses, module = Module())
     Function("nextToken", StringType,
       paramTypes = list(stdio$FILEPtrType, Int32PtrType), module = module)
 
-  types = list(r_file_vec = STRSXPType, r_n = INTSXPType)
+  types = list(r_file = StringType, r_n = Int32Type)
   fun = Function("readCSV", SEXPType, paramTypes = types, module = module)
   args = getParameters(fun)
 
@@ -168,24 +164,13 @@ generate_readCSV = function(colClasses, module = Module())
   g_READ = createGlobalString(builder, "r", "READ")
 
   # Open File --------------------------------------------------
-  ll_file_elt =
-    createCall(builder, rdefines$STRING_ELT, args$r_file_vec, 
-      createIntegerConstant(0L), id = "file_elt")
-  ll_file_name =
-    createCall(builder, rdefines$POINTER_TO[["character"]], 
-      ll_file_elt, id = "file_name")
-
   ll_file =
-    createCall(builder, stdio$fopen, ll_file_name,
+    createCall(builder, stdio$fopen, args$r_file,
       createGEP(builder, g_READ, replicate(2, createIntegerConstant(0L))),
       id = "file")
   # TODO: Check that the file was actually opened.
 
   # Allocate Memory --------------------------------------------------
-  # Get a pointer to the number of rows.
-  tmp = createCall(builder, rdefines$POINTER_TO[["integer"]], args$r_n)
-  ll_n = createLoad(builder, tmp, id = "n")
-
   # Allocate and protect each column.
   # TODO: Use names V1, V2, etc. like the C version.
   ll_col_sexps =
@@ -193,7 +178,7 @@ generate_readCSV = function(colClasses, module = Module())
       function(col) {
         ll_col_sexp =
           createCall(builder, rdefines$Rf_allocVector,
-            rdefines$SXPTYPE[[col]], ll_n)
+            rdefines$SXPTYPE[[col]], args$r_n)
         createCall(builder, rdefines$Rf_protect, ll_col_sexp)
         return(ll_col_sexp)
       })
@@ -216,7 +201,7 @@ generate_readCSV = function(colClasses, module = Module())
 
   # Load i.
   ll_i = createLoad(builder, ll_i_ptr, id = "i")
-  tmp = createICmp(builder, ICMP_SLT, ll_i, ll_n)
+  tmp = createICmp(builder, ICMP_SLT, ll_i, args$r_n)
   createCondBr(builder, tmp, b_while_body, b_exit)
 
   # Body
